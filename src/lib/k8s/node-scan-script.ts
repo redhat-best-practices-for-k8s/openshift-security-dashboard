@@ -68,12 +68,42 @@ json_escape() {
 }
 
 _SCAN_RETFILE="/tmp/.tls_scan_ret.$$"
+_SCAN_HSFILE="/tmp/.tls_scan_hs.$$"
+
+# Extract handshake details from an openssl s_client output
+parse_handshake() {
+  local result="$1"
+  local kex_group="" kex_bits="" sig_algo="" alpn=""
+
+  local temp_key
+  temp_key=$(echo "$result" | grep -i "Server Temp Key:" | head -1)
+  if [ -n "$temp_key" ]; then
+    # "Server Temp Key: X25519, 253 bits" or "Server Temp Key: ECDH, P-256, 256 bits"
+    # or "Server Temp Key: X25519MLKEM768, 1217 bits"
+    kex_group=$(echo "$temp_key" | sed 's/.*Server Temp Key: *//;s/, *[0-9].*//')
+    kex_bits=$(echo "$temp_key" | grep -oP '[0-9]+ bits' | grep -oP '[0-9]+')
+    # For "ECDH, P-256" style, combine into the named curve
+    if [ "$kex_group" = "ECDH" ]; then
+      local curve
+      curve=$(echo "$temp_key" | sed 's/.*Server Temp Key: *ECDH, *//;s/, *[0-9].*//')
+      [ -n "$curve" ] && kex_group="$curve"
+    fi
+  fi
+
+  sig_algo=$(echo "$result" | grep -i "Peer signature type:" | head -1 | sed 's/.*Peer signature type: *//')
+  alpn=$(echo "$result" | grep -i "ALPN protocol:" | head -1 | sed 's/.*ALPN protocol: *//')
+  [ "$alpn" = "None" ] && alpn=""
+
+  echo "\${kex_group}|\${kex_bits}|\${sig_algo}|\${alpn}" > "$_SCAN_HSFILE"
+}
 
 scan_port_tls() {
   local pid=$1 ip=$2 port=$3
   local versions_found=""
   local ciphers_json=""
   local tls_supported=false
+  local best_result=""
+  local best_ver=""
 
   for ver_flag in "-tls1" "-tls1_1" "-tls1_2" "-tls1_3"; do
     local ver_name=""
@@ -93,6 +123,8 @@ scan_port_tls() {
 
     if echo "$cipher_line" | grep -q "Cipher is.*[A-Z]"; then
       tls_supported=true
+      best_result="$result"
+      best_ver="$ver_name"
       logv "  openssl $ver_flag -> $cipher_line"
       if [ -z "$versions_found" ]; then
         versions_found="$ver_name"
@@ -108,12 +140,20 @@ scan_port_tls() {
       bash -c "echo >/dev/tcp/$ip/$port" 2>&1) && {
       logv "  No TLS, but port is open (plain TCP)"
       echo "NO_TLS|||" > "$_SCAN_RETFILE"
+      echo "|||" > "$_SCAN_HSFILE"
       return
     }
     logv "  Connection failed or filtered"
     echo "CONNECT_FAIL|||" > "$_SCAN_RETFILE"
+    echo "|||" > "$_SCAN_HSFILE"
     return
   fi
+
+  # Extract handshake details from the best (highest) version
+  parse_handshake "$best_result"
+  local hs_data
+  hs_data=$(cat "$_SCAN_HSFILE")
+  logv "  Handshake ($best_ver): $hs_data"
 
   # Enumerate TLS 1.2 ciphers (peel method)
   local exclude=""
@@ -230,9 +270,15 @@ for netns in "\${!NETNS_TO_CIDS[@]}"; do
     logv "Port $local_port ($proc_name) on $scan_ip - probing TLS..."
 
     echo -n "" > "$_SCAN_RETFILE"
+    echo -n "" > "$_SCAN_HSFILE"
     scan_port_tls "$pid" "$scan_ip" "$local_port"
     scan_result=$(cat "$_SCAN_RETFILE")
     IFS='|' read -r status versions ciphers_json <<< "$scan_result"
+
+    # Read handshake details
+    hs_raw=$(cat "$_SCAN_HSFILE" 2>/dev/null)
+    hs_kex_group="" hs_kex_bits="" hs_sig_algo="" hs_alpn=""
+    IFS='|' read -r hs_kex_group hs_kex_bits hs_sig_algo hs_alpn <<< "$hs_raw"
 
     reason=""
     versions_json="[]"
@@ -252,14 +298,21 @@ for netns in "\${!NETNS_TO_CIDS[@]}"; do
         versions_json="$versions_json]"
         ciphers_out="$ciphers_json"
         [ -z "$ciphers_out" ] && ciphers_out="[]"
-        logv "  => OK ($versions)"
+        logv "  => OK ($versions) kex=$hs_kex_group sig=$hs_sig_algo"
         ;;
       NO_TLS)  reason="Port open but no TLS detected"; logv "  => NO_TLS" ;;
       CONNECT_FAIL) status="FILTERED"; reason="Connection failed or filtered"; logv "  => FILTERED" ;;
       *) status="ERROR"; reason="Unexpected scan result"; logv "  => ERROR" ;;
     esac
 
-    entry="{\\"port\\":$local_port,\\"protocol\\":\\"tcp\\",\\"listen_address\\":\\"$listen_addr:$local_port\\",\\"process\\":\\"$(json_escape "$proc_name")\\",\\"status\\":\\"$status\\",\\"reason\\":\\"$(json_escape "$reason")\\",\\"tls_versions\\":$versions_json,\\"tls_ciphers\\":$ciphers_out}"
+    # Build handshake JSON fields
+    hs_json=""
+    [ -n "$hs_kex_group" ] && hs_json="$hs_json,\\"key_exchange_group\\":\\"$(json_escape "$hs_kex_group")\\""
+    [ -n "$hs_kex_bits" ]  && hs_json="$hs_json,\\"key_exchange_bits\\":$hs_kex_bits"
+    [ -n "$hs_sig_algo" ]  && hs_json="$hs_json,\\"signature_algorithm\\":\\"$(json_escape "$hs_sig_algo")\\""
+    [ -n "$hs_alpn" ]      && hs_json="$hs_json,\\"alpn_protocol\\":\\"$(json_escape "$hs_alpn")\\""
+
+    entry="{\\"port\\":$local_port,\\"protocol\\":\\"tcp\\",\\"listen_address\\":\\"$listen_addr:$local_port\\",\\"process\\":\\"$(json_escape "$proc_name")\\",\\"status\\":\\"$status\\",\\"reason\\":\\"$(json_escape "$reason")\\",\\"tls_versions\\":$versions_json,\\"tls_ciphers\\":$ciphers_out$hs_json}"
     if [ -z "$port_results" ]; then port_results="$entry"; else port_results="$port_results,$entry"; fi
 
   done <<< "$ports_info"

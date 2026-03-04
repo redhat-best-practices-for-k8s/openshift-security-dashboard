@@ -13,6 +13,8 @@ interface RawCipherEntry { name: string; version: string; }
 interface RawPortResult {
   port: number; protocol: string; listen_address: string; process: string;
   status: string; reason: string; tls_versions: string[]; tls_ciphers: RawCipherEntry[];
+  key_exchange_group?: string; key_exchange_bits?: number;
+  signature_algorithm?: string; alpn_protocol?: string;
 }
 interface RawNetnsResult { netns: string; container_ids: string[]; ips: string[]; ports: RawPortResult[]; }
 interface RawNodeResults { node: string; scan_results: RawNetnsResult[]; errors: unknown[]; scanned_netns: number; total_netns: number; }
@@ -509,7 +511,23 @@ async function collectAndMergeResults(finishedProcs: NodeProc[]): Promise<TLSSca
         for (const c of rawPort.tls_ciphers) {
           cipherStrength[c.name] = gradeCipher(c.name, c.version);
         }
+
+        const kexGroup = rawPort.key_exchange_group || undefined;
+        const isPqc = kexGroup
+          ? /MLKEM|Kyber|BIKE|HQC|NTRU|Frodo/i.test(kexGroup)
+          : false;
         const hasT13 = rawPort.tls_ciphers.some((c) => c.version === "TLSv1.3");
+        const quantumReady = isPqc || (hasT13 && !kexGroup);
+
+        const handshake = (kexGroup || rawPort.signature_algorithm || rawPort.alpn_protocol)
+          ? {
+              key_exchange_group: kexGroup,
+              key_exchange_bits: rawPort.key_exchange_bits || undefined,
+              signature_algorithm: rawPort.signature_algorithm || undefined,
+              alpn_protocol: rawPort.alpn_protocol || undefined,
+              is_pqc: isPqc,
+            }
+          : undefined;
 
         return {
           port: rawPort.port,
@@ -518,10 +536,11 @@ async function collectAndMergeResults(finishedProcs: NodeProc[]): Promise<TLSSca
           service: rawPort.process || "",
           process_name: rawPort.process || undefined,
           container_id: netnsResult.container_ids[0] || undefined,
-          quantum_ready: hasT13,
+          quantum_ready: quantumReady,
           tls_versions: rawPort.tls_versions,
           tls_ciphers: cipherNames.length > 0 ? cipherNames : undefined,
           tls_cipher_strength: Object.keys(cipherStrength).length > 0 ? cipherStrength : undefined,
+          handshake,
           status: rawPort.status as TLSPortResult["status"],
           reason: rawPort.reason || undefined,
           listen_address: rawPort.listen_address || undefined,

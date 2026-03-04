@@ -20,6 +20,7 @@ import {
   ShieldCheck,
   ShieldX,
 } from "lucide-react";
+import { KeyRound } from "lucide-react";
 import type { TLSIPResult, TLSPortResult, TLSScanStatus } from "@/types";
 
 interface TLSPortDetailProps {
@@ -129,6 +130,48 @@ export function TLSPortDetail({ ipResult, portResult, open, onClose }: TLSPortDe
               </CardContent>
             </Card>
 
+            {/* Handshake Details */}
+            {pr.handshake && (pr.handshake.key_exchange_group || pr.handshake.signature_algorithm || pr.handshake.alpn_protocol) && (
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm flex items-center gap-1.5">
+                    <KeyRound className="h-4 w-4" />
+                    Handshake Details
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-1.5 text-xs">
+                  {pr.handshake.key_exchange_group && (
+                    <div className="flex justify-between items-center">
+                      <span className="text-muted-foreground">Key Exchange</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono font-medium">{pr.handshake.key_exchange_group}</span>
+                        {pr.handshake.key_exchange_bits && (
+                          <span className="text-muted-foreground">({pr.handshake.key_exchange_bits} bits)</span>
+                        )}
+                        {pr.handshake.is_pqc && (
+                          <Badge variant="outline" className="text-[9px] bg-purple-500/15 text-purple-700 border-purple-300">
+                            PQC
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {pr.handshake.signature_algorithm && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Signature Algorithm</span>
+                      <span className="font-mono">{pr.handshake.signature_algorithm}</span>
+                    </div>
+                  )}
+                  {pr.handshake.alpn_protocol && (
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">ALPN Protocol</span>
+                      <span className="font-mono">{pr.handshake.alpn_protocol}</span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Quantum Ready */}
             {pr.status === "OK" && (
               <Card>
@@ -138,13 +181,27 @@ export function TLSPortDetail({ ipResult, portResult, open, onClose }: TLSPortDe
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {pr.quantum_ready ? (
+                  {pr.handshake?.is_pqc ? (
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck className="h-5 w-5 text-purple-600" />
+                      <div>
+                        <p className="text-sm font-medium text-purple-700">PQC Active</p>
+                        <p className="text-xs text-muted-foreground">
+                          Negotiated <span className="font-mono font-medium">{pr.handshake.key_exchange_group}</span> — a post-quantum hybrid key exchange.
+                          This connection is protected against quantum computing attacks.
+                        </p>
+                      </div>
+                    </div>
+                  ) : pr.quantum_ready ? (
                     <div className="flex items-center gap-2">
                       <ShieldCheck className="h-5 w-5 text-green-600" />
                       <div>
-                        <p className="text-sm font-medium text-green-700">Quantum Capable</p>
+                        <p className="text-sm font-medium text-green-700">TLS 1.3 Capable</p>
                         <p className="text-xs text-muted-foreground">
-                          This port supports TLS 1.3, which enables PQC (Post-Quantum Cryptography) key exchange.
+                          Supports TLS 1.3, which enables PQC key exchange.
+                          {pr.handshake?.key_exchange_group
+                            ? ` Currently negotiating ${pr.handshake.key_exchange_group} (classical). PQC requires server-side OpenSSL 3.5+ with ML-KEM support.`
+                            : " PQC will activate when the server's OpenSSL supports ML-KEM groups."}
                         </p>
                       </div>
                     </div>

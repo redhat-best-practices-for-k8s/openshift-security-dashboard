@@ -427,6 +427,14 @@ export interface TLSConfigComplianceResult {
   ciphers: boolean;
 }
 
+export interface TLSHandshakeDetails {
+  key_exchange_group?: string;
+  key_exchange_bits?: number;
+  signature_algorithm?: string;
+  alpn_protocol?: string;
+  is_pqc?: boolean;
+}
+
 export interface TLSPortResult {
   port: number;
   protocol: string;
@@ -439,6 +447,7 @@ export interface TLSPortResult {
   tls_versions?: string[];
   tls_ciphers?: string[];
   tls_cipher_strength?: Record<string, string>;
+  handshake?: TLSHandshakeDetails;
   error?: string;
   status: TLSScanStatus;
   reason?: string;

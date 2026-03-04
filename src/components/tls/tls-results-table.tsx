@@ -228,6 +228,7 @@ export function TLSResultsTable({ filteredIPs, onSelectPort }: TLSResultsTablePr
               <TableHead className="w-20">
                 <FieldLabel term="TLSCipher">Ciphers</FieldLabel>
               </TableHead>
+              <TableHead>Key Exchange</TableHead>
               <TableHead className="w-14">
                 <FieldLabel term="QuantumReady">QR</FieldLabel>
               </TableHead>
@@ -242,7 +243,7 @@ export function TLSResultsTable({ filteredIPs, onSelectPort }: TLSResultsTablePr
           <TableBody>
             {filtered.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={12} className="text-center text-muted-foreground py-8">
                   No port results match your filters
                 </TableCell>
               </TableRow>
@@ -301,6 +302,23 @@ export function TLSResultsTable({ filteredIPs, onSelectPort }: TLSResultsTablePr
                     </TableCell>
                     <TableCell className="text-xs font-mono text-center">
                       {pr.tls_ciphers?.length || 0}
+                    </TableCell>
+                    <TableCell className="text-xs font-mono">
+                      {pr.handshake?.key_exchange_group ? (
+                        <Badge
+                          variant="outline"
+                          className={`text-[9px] font-mono ${
+                            pr.handshake.is_pqc
+                              ? "bg-purple-500/10 text-purple-700 border-purple-300"
+                              : "bg-gray-500/10 text-gray-700"
+                          }`}
+                        >
+                          {pr.handshake.key_exchange_group}
+                          {pr.handshake.key_exchange_bits ? ` (${pr.handshake.key_exchange_bits}b)` : ""}
+                        </Badge>
+                      ) : pr.status === "OK" ? (
+                        <span className="text-muted-foreground text-[10px]">-</span>
+                      ) : null}
                     </TableCell>
                     <TableCell className="text-center">
                       {pr.quantum_ready ? (
