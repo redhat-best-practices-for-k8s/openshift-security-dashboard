@@ -517,7 +517,7 @@ async function collectAndMergeResults(finishedProcs: NodeProc[]): Promise<TLSSca
           ? /MLKEM|Kyber|BIKE|HQC|NTRU|Frodo/i.test(kexGroup)
           : false;
         const hasT13 = rawPort.tls_ciphers.some((c) => c.version === "TLSv1.3");
-        const quantumReady = isPqc || (hasT13 && !kexGroup);
+        const quantumReady = isPqc || hasT13;
 
         const handshake = (kexGroup || rawPort.signature_algorithm || rawPort.alpn_protocol)
           ? {
