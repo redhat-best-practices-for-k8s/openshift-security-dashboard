@@ -29,11 +29,24 @@ function extractComponentNameFromImage(image: string): string {
   return imageName || "unknown";
 }
 
+const INTERNAL_REGISTRY_HOST = "image-registry.openshift-image-registry.svc";
+const REDHAT_REGISTRY_HOSTS = new Set(["quay.io", "registry.redhat.com"]);
+
+// Registry host of an image reference, e.g. "quay.io" for "quay.io/org/img:tag".
+// Compared exactly so a host name appearing elsewhere in the reference doesn't match.
+function registryHost(image: string): string {
+  return image.split("/")[0] || "";
+}
+
+function isInternalRegistry(host: string): boolean {
+  return host === INTERNAL_REGISTRY_HOST || host.startsWith(`${INTERNAL_REGISTRY_HOST}:`);
+}
+
 function extractRegistryFromImage(image: string): string {
-  if (image.includes("quay.io")) return "quay.io";
-  if (image.includes("registry.redhat.com")) return "registry.redhat.com";
-  if (image.includes("image-registry.openshift-image-registry.svc")) return "internal-registry";
-  return image.split("/")[0] || "unknown";
+  const host = registryHost(image);
+  if (REDHAT_REGISTRY_HOSTS.has(host)) return host;
+  if (isInternalRegistry(host)) return "internal-registry";
+  return host || "unknown";
 }
 
 function extractMaintainerFromNamespace(ns: string): string {
@@ -50,7 +63,9 @@ function extractOpenshiftComponent(
 ): { component: string; sourceLocation: string; maintainer: string } {
   // Step 1: try to derive component from the container image (primary method)
   if (image) {
-    if (image.includes("quay.io/openshift-release-dev")) {
+    const host = registryHost(image);
+
+    if (image.startsWith("quay.io/openshift-release-dev/")) {
       const sourceLocation = "quay.io/openshift-release-dev";
       const maintainer = "openshift";
       // Try known patterns in the image reference
@@ -60,7 +75,7 @@ function extractOpenshiftComponent(
       // For SHA-based release images, fall through to labels
     }
 
-    if (image.includes("image-registry.openshift-image-registry.svc")) {
+    if (isInternalRegistry(host)) {
       const parts = image.split("/");
       if (parts.length >= 3) {
         return {
@@ -71,7 +86,7 @@ function extractOpenshiftComponent(
       }
     }
 
-    if (image.includes("quay.io") || image.includes("registry.redhat.com")) {
+    if (REDHAT_REGISTRY_HOSTS.has(host)) {
       const imgComponent = extractComponentNameFromImage(image);
       if (imgComponent && imgComponent !== "unknown") {
         return {
